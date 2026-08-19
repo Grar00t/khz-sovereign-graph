@@ -1,0 +1,91 @@
+name: Sovereign Graph Validation
+
+on:
+  push:
+    branches:
+      - main
+      - 'remediation/**'
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip pytest jsonschema psycopg2-binary
+
+      - name: Validate canonical JSON schema
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import jsonschema
+
+          schema = json.loads(Path('schema/canonical_knowledge_graph_v2.1.0.json').read_text(encoding='utf-8'))
+          graph_path = Path('data/canonical_graph_v2.json')
+          graph = json.loads(graph_path.read_text(encoding='utf-8'))
+          jsonschema.Draft202012Validator(schema).validate(graph)
+          print(f'validated {graph_path}')
+          PY
+
+      - name: Run graph audit
+        run: python scripts/audit_graph.py --graph data/canonical_graph_v2.json --output audits/ci-audit.json
+
+      - name: Run pytest
+        run: pytest tests/test_validation.py -v
+
+      - name: Apply database migrations
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -f db/migrations/001_skg_core.sql
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -f db/migrations/002_canonical_v2_1_hardening.sql
+
+      - name: Run pgTAP tests when present
+        env:
+          PGPASSWORD: postgres
+        run: |
+          if compgen -G 'db/pgTAP/*.sql' > /dev/null || compgen -G 'db/pgtap/*.sql' > /dev/null; then
+            apt-get update
+            apt-get install -y postgresql-17-pgtap
+            for f in db/pgTAP/*.sql db/pgtap/*.sql; do
+              [ -f "$f" ] || continue
+              psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
+            done
+          else
+            echo 'No pgTAP test files present; pgTAP stage skipped.'
+          fi
+
+      - name: Upload audit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sovereign-graph-audit
+          path: audits/ci-audit.json
+          if-no-files-found: ignore
