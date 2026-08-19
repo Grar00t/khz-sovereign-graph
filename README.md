@@ -1,4 +1,4 @@
-# Khawrizm Sovereign Graph
+# Khz Sovereign Graph
 
 Evidence-first local knowledge graph for PostgreSQL/Supabase deployments.
 
