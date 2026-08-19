@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/audit/*|refs/heads/forensics/*|refs/heads/compliance/*)
+      if [[ "$remote_sha" != "0000000000000000000000000000000000000000" ]]; then
+        if git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+          :
+        else
+          echo 'APPEND_ONLY_BRANCH_REJECTED=1' >&2
+          exit 1
+        fi
+      fi
+      ;;&
+    refs/heads/main)
+      if [[ "$remote_sha" != "0000000000000000000000000000000000000000" ]] && ! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+        echo 'FORCE_PUSH_REJECTED=1' >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
