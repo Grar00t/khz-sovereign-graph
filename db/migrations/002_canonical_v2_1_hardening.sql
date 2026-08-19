@@ -36,47 +36,40 @@ values
     ('AE', 'UAE_PDPL', '2026-01', false, true, 'UNVERIFIED_ASSERTION: map transfer conditions per deployment', date '2026-01-01')
 on conflict (jurisdiction_code) do nothing;
 
-alter table skg.nodes
-    add column if not exists scope_jurisdiction text;
+alter table skg.nodes add column if not exists scope_jurisdiction text;
 
 update skg.nodes
-set scope_jurisdiction = upper(coalesce(scope_jurisdiction, scope_domain))
-where scope_jurisdiction is null and scope_domain is not null;
+set scope_jurisdiction = upper(scope_domain)
+where scope_jurisdiction is null and scope_domain in ('SA','EU','US','CN','AE');
 
-alter table skg.nodes
-    drop constraint if exists node_scope_jurisdiction_fk;
-alter table skg.nodes
-    add constraint node_scope_jurisdiction_fk
-    foreign key (scope_jurisdiction) references skg_policy.jurisdictions(jurisdiction_code);
+alter table skg.nodes drop constraint if exists node_scope_jurisdiction_fk;
+alter table skg.nodes add constraint node_scope_jurisdiction_fk
+foreign key (scope_jurisdiction) references skg_policy.jurisdictions(jurisdiction_code);
 
 create index if not exists idx_nodes_scope_jurisdiction on skg.nodes(scope_jurisdiction);
 
-create or replace function skg_policy.prevent_cross_border(
-    p_source text,
-    p_target text
-) returns boolean
+create or replace function skg_policy.prevent_cross_border(p_source text, p_target text)
+returns boolean
 language sql
 stable
 as $$
     select coalesce(s.scope_jurisdiction, t.scope_jurisdiction) is null
         or s.scope_jurisdiction = t.scope_jurisdiction
         or not exists (
-            select 1
-            from skg_policy.jurisdictions j
+            select 1 from skg_policy.jurisdictions j
             where j.jurisdiction_code = coalesce(s.scope_jurisdiction, t.scope_jurisdiction)
-              and j.residency_required
-              and not j.cross_border_allowed
+              and j.residency_required and not j.cross_border_allowed
         )
-    from skg.nodes s
-    join skg.nodes t on true
+    from skg.nodes s join skg.nodes t on true
     where s.id = p_source and t.id = p_target;
 $$;
 
-create or replace function skg.audit_row_hash(p_row jsonb) returns text
+create or replace function skg.audit_row_hash(p_row jsonb)
+returns text
 language sql
 immutable
 as $$
-    select encode(digest(convert_to(p_row::text, 'utf8'), 'sha256'), 'hex');
+    select encode(extensions.digest(convert_to(p_row::text, 'utf8'), 'sha256'), 'hex');
 $$;
 
 create table if not exists skg_audit.chain (
@@ -92,14 +85,13 @@ create table if not exists skg_audit.chain (
     metadata jsonb not null default '{}'::jsonb
 );
 
-create unique index if not exists skg_audit_chain_unique_idx
-on skg_audit.chain(sequence_no, chain_hash);
+create unique index if not exists skg_audit_chain_unique_idx on skg_audit.chain(sequence_no, chain_hash);
 
 create or replace function skg_audit.append_chain_event()
 returns trigger
 language plpgsql
 security definer
-set search_path = pg_catalog, public, skg, skg_audit
+set search_path = pg_catalog, public, skg, skg_audit, extensions
 as $$
 declare
     old_json jsonb;
@@ -110,13 +102,8 @@ declare
     object_id_value text;
     chain_value text;
 begin
-    if tg_op = 'DELETE' then
-        old_json := to_jsonb(old);
-        object_id_value := old.id;
-    else
-        new_json := to_jsonb(new);
-        object_id_value := new.id;
-    end if;
+    if tg_op = 'DELETE' then old_json := to_jsonb(old); object_id_value := old.id;
+    else new_json := to_jsonb(new); object_id_value := new.id; end if;
     before_hash := case when tg_op in ('UPDATE','DELETE') then skg.audit_row_hash(old_json) end;
     after_hash := case when tg_op in ('INSERT','UPDATE') then skg.audit_row_hash(new_json) end;
     select chain_hash into previous_hash from skg_audit.chain order by sequence_no desc limit 1;
@@ -135,13 +122,11 @@ end;
 $$;
 
 drop trigger if exists trg_nodes_audit_chain on skg.nodes;
-create trigger trg_nodes_audit_chain
-after insert or update or delete on skg.nodes
+create trigger trg_nodes_audit_chain after insert or update or delete on skg.nodes
 for each row execute function skg_audit.append_chain_event();
 
 drop trigger if exists trg_edges_audit_chain on skg.edges;
-create trigger trg_edges_audit_chain
-after insert or update or delete on skg.edges
+create trigger trg_edges_audit_chain after insert or update or delete on skg.edges
 for each row execute function skg_audit.append_chain_event();
 
-after transaction;
+commit;
