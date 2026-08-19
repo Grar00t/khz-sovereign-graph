@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+export PYTHONHASHSEED=0
+
+python3 "$ROOT/scripts/audit_graph.py" --graph "$ROOT/data/canonical_graph_v2.json"
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 - <<'PY'
+import json
+from pathlib import Path
+try:
+    import jsonschema
+except ImportError:
+    raise SystemExit("jsonschema is required for pre-commit validation")
+schema = json.loads(Path("schema/canonical_knowledge_graph_v2.1.0.json").read_text(encoding="utf-8"))
+for path in [Path("data/canonical_graph_v2.json")]:
+    jsonschema.Draft202012Validator(schema).validate(json.loads(path.read_text(encoding="utf-8")))
+PY
+fi
+
+git diff --cached --check
