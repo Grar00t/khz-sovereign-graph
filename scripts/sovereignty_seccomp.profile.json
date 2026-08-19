@@ -1,0 +1,9 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_AARCH64"],
+  "syscalls": [
+    {"names": ["read","write","readv","writev","close","fstat","newfstatat","lseek","mmap","mprotect","munmap","brk","rt_sigaction","rt_sigprocmask","rt_sigreturn","futex","clock_gettime","nanosleep","sched_yield","getpid","gettid","getuid","geteuid","getgid","getegid","set_tid_address","set_robust_list","exit","exit_group","arch_prctl","prlimit64","uname","getrandom"], "action": "SCMP_ACT_ALLOW"},
+    {"names": ["socket","connect","accept","accept4","bind","listen","sendto","sendmsg","recvfrom","recvmsg","sendfile","setsockopt","getsockopt","getpeername","getsockname","shutdown"], "action": "SCMP_ACT_ERRNO", "errnoRet": 1},
+    {"names": ["execve","execveat","fork","vfork","clone","clone3","ptrace","process_vm_readv","process_vm_writev","bpf","perf_event_open","kexec_load","kexec_file_load","init_module","finit_module","delete_module","mount","umount2","pivot_root","unshare","setns","reboot"], "action": "SCMP_ACT_ERRNO", "errnoRet": 1}
+  ]
+}
